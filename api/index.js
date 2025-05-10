@@ -1,5 +1,14 @@
-// index.js
+// index.js  ────────────────────────────────────────────────────────────────
+// Ready for @vercel/node (Serverless Function). No app.listen() needed.
+// Place this file in your repo root and make sure `vercel.json` contains:
+//   {
+//     "version": 3,
+//     "builds": [{ "src": "index.js", "use": "@vercel/node" }],
+//     "routes":  [{ "src": "/(.*)", "dest": "index.js" }]
+//   }
+// ──────────────────────────────────────────────────────────────────────────
 require('dotenv').config();
+
 const express       = require('express');
 const mongoose      = require('mongoose');
 const cors          = require('cors');
@@ -11,69 +20,76 @@ const cloudinary    = require('cloudinary').v2;
 const multer        = require('multer');
 
 // Mongoose models
-const User    = require('./models/User.js');
-const Place   = require('./models/Place.js');
-const Booking = require('./models/Booking.js');
+const User    = require('./models/User');
+const Place   = require('./models/Place');
+const Booking = require('./models/Booking');
 
-// Config constants
+// ──────────────────────────────────────────────────────────────────────────
+// Config
+// ──────────────────────────────────────────────────────────────────────────
 const bcryptSalt   = bcrypt.genSaltSync(10);
 const jwtSecret    = process.env.JWT_SECRET || 'change_this_in_production';
-const MONGO_URL    = process.env.MONGO_URL;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const MONGO_URL    = process.env.MONGO_URL;
 
-// Connect to MongoDB
-mongoose.connect(MONGO_URL)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
+// ──────────────────────────────────────────────────────────────────────────
+// MongoDB connection (cached across cold-starts)
+// ──────────────────────────────────────────────────────────────────────────
+async function connectMongo() {
+  if (global.mongoose) return global.mongoose;
+  global.mongoose = await mongoose.connect(MONGO_URL, {
+    useNewUrlParser:           true,
+    useUnifiedTopology:        true,
+    serverSelectionTimeoutMS:  30000,
+    socketTimeoutMS:           45000,
   });
+  console.log('✅ MongoDB connected');
+  return global.mongoose;
+}
+connectMongo().catch(err => {
+  console.error('❌ MongoDB connection error:', err);
+});
 
+// ──────────────────────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({ credentials: true, origin: FRONTEND_URL }));
 
-// Configure Cloudinary
+// ── Cloudinary + Multer
 cloudinary.config({
   cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
   api_key:     process.env.CLOUDINARY_API_KEY,
   api_secret:  process.env.CLOUDINARY_API_SECRET,
   secure:      true,
 });
-
-// Multer‐Storage‐Cloudinary setup
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder: 'hotel-booking',
-    format: async (req, file) => file.mimetype.split('/')[1],
-    public_id: (req, file) => Date.now().toString(),
+    folder:   'hotel-booking',
+    format:   (_, file) => file.mimetype.split('/')[1],
+    public_id: () => Date.now().toString(),
   },
 });
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
-});
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-// Helper: verify JWT from cookie
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────
 function getUserDataFromReq(req) {
   return new Promise((resolve, reject) => {
     const { token } = req.cookies;
-    if (!token) return reject(new Error('No token provided'));
-    jwt.verify(token, jwtSecret, {}, (err, decoded) => {
-      if (err) return reject(err);
-      resolve(decoded);
-    });
+    if (!token) return reject(new Error('No token'));
+    jwt.verify(token, jwtSecret, {}, (err, data) => (err ? reject(err) : resolve(data)));
   });
 }
 
-// ---------------------- Routes ----------------------
+// ──────────────────────────────────────────────────────────────────────────
+// Routes
+// ──────────────────────────────────────────────────────────────────────────
 
-// Test endpoint
-app.get('/api/test', (req, res) => {
-  res.json('Test OK');
-});
+// Health check
+app.get('/api/test', (_req, res) => res.json('Test OK'));
 
 // Register
 app.post('/api/register', async (req, res) => {
@@ -105,11 +121,13 @@ app.post('/api/login', async (req, res) => {
       {},
       (err, token) => {
         if (err) throw err;
-        res.cookie('token', token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'strict',
-        }).json(userDoc);
+        res
+          .cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+          })
+          .json(userDoc);
       }
     );
   } catch (err) {
@@ -125,66 +143,64 @@ app.get('/api/profile', async (req, res) => {
     const user = await User.findById(userData.id);
     if (!user) return res.status(404).json('User not found');
     res.json({ name: user.name, email: user.email, _id: user._id });
-  } catch (err) {
+  } catch {
     res.status(401).json('Invalid token');
   }
 });
 
 // Logout
-app.post('/api/logout', (req, res) => {
-  res.cookie('token', '', { expires: new Date(0) }).json(true);
-});
+app.post('/api/logout', (_req, res) =>
+  res.cookie('token', '', { expires: new Date(0) }).json(true)
+);
 
-// Upload by URL → Cloudinary
+// Upload by URL
 app.post('/api/upload-by-link', async (req, res) => {
   try {
     const { link } = req.body;
     const result = await cloudinary.uploader.upload(link, { folder: 'hotel-booking' });
     res.json(result.secure_url);
-  } catch (err) {
-    console.error(err);
+  } catch {
     res.status(500).json('Upload failed');
   }
 });
 
-// Upload from device → Cloudinary
+// Upload from device
 app.post('/api/upload', upload.array('photos', 100), (req, res) => {
   try {
     const urls = req.files.map(f => f.path);
     res.json(urls);
-  } catch (err) {
-    console.error(err);
+  } catch {
     res.status(500).json('Upload failed');
   }
 });
 
-// Get user’s places
+// User places
 app.get('/api/user-places', async (req, res) => {
   try {
     const userData = await getUserDataFromReq(req);
-    const userPlaces = await Place.find({ owner: userData.id });
-    res.json(userPlaces);
-  } catch (err) {
+    const places = await Place.find({ owner: userData.id });
+    res.json(places);
+  } catch {
     res.status(500).json('Failed to get user places');
   }
 });
 
-// Get all places
-app.get('/api/places', async (req, res) => {
+// All places
+app.get('/api/places', async (_req, res) => {
   try {
     const places = await Place.find();
     res.json(places);
-  } catch (err) {
+  } catch {
     res.status(500).json('Failed to get places');
   }
 });
 
-// Get a place by ID
+// Place by ID
 app.get('/api/places/:id', async (req, res) => {
   try {
     const place = await Place.findById(req.params.id);
     res.json(place);
-  } catch (err) {
+  } catch {
     res.status(500).json('Failed to get place');
   }
 });
@@ -197,7 +213,7 @@ app.post('/api/places', async (req, res) => {
       title, address, addedPhotos, description,
       perks, extraInfo, checkIn, checkOut, maxGuests, price,
     } = req.body;
-    const placeDoc = await Place.create({
+    const doc = await Place.create({
       owner: userData.id,
       title,
       address,
@@ -210,8 +226,8 @@ app.post('/api/places', async (req, res) => {
       maxGuests,
       price,
     });
-    res.json(placeDoc);
-  } catch (err) {
+    res.json(doc);
+  } catch {
     res.status(401).json('Unauthorized');
   }
 });
@@ -224,26 +240,18 @@ app.put('/api/places', async (req, res) => {
       id, title, address, addedPhotos, description,
       perks, extraInfo, checkIn, checkOut, maxGuests, price,
     } = req.body;
-    const placeDoc = await Place.findById(id);
-    if (!placeDoc) return res.status(404).json('Place not found');
-    if (placeDoc.owner.toString() !== userData.id) {
-      return res.status(403).json('You are not the owner of this place');
+    const place = await Place.findById(id);
+    if (!place) return res.status(404).json('Place not found');
+    if (place.owner.toString() !== userData.id) {
+      return res.status(403).json('Not owner');
     }
-    placeDoc.set({
-      title,
-      address,
-      photos: addedPhotos,
-      description,
-      perks,
-      extraInfo,
-      checkIn,
-      checkOut,
-      maxGuests,
-      price,
+    place.set({
+      title, address, photos: addedPhotos, description,
+      perks, extraInfo, checkIn, checkOut, maxGuests, price,
     });
-    await placeDoc.save();
+    await place.save();
     res.json('ok');
-  } catch (err) {
+  } catch {
     res.status(500).json('Failed to update place');
   }
 });
@@ -255,36 +263,28 @@ app.post('/api/bookings', async (req, res) => {
     const {
       place, checkIn, checkOut, numberOfGuests, name, phone, price,
     } = req.body;
-    const bookingDoc = await Booking.create({
-      place,
-      checkIn,
-      checkOut,
-      numberOfGuests,
-      name,
-      phone,
-      price,
+    const doc = await Booking.create({
+      place, checkIn, checkOut, numberOfGuests, name, phone, price,
       user: userData.id,
     });
-    res.json(bookingDoc);
-  } catch (err) {
+    res.json(doc);
+  } catch {
     res.status(500).json('Failed to create booking');
   }
 });
 
-// Get bookings for current user
+// User bookings
 app.get('/api/bookings', async (req, res) => {
   try {
     const userData = await getUserDataFromReq(req);
-    const userBookings = await Booking.find({ user: userData.id }).populate('place');
-    res.json(userBookings);
-  } catch (err) {
+    const bookings = await Booking.find({ user: userData.id }).populate('place');
+    res.json(bookings);
+  } catch {
     res.status(500).json('Failed to get bookings');
   }
 });
 
-// Start the server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
- 
+// ──────────────────────────────────────────────────────────────────────────
+// Export for Vercel
+// ──────────────────────────────────────────────────────────────────────────
+module.exports = app;
