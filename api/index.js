@@ -15,7 +15,7 @@ const cloudinary   = require('cloudinary').v2;
 // Environment & Models
 // ──────────────────────────────────────────────────────────────────────────
 const {
-  JWT_SECRET     = 'change_this_in_production',
+  JWT_SECRET     = 'kfslkfjlskjfls546546sfslk$3$%^jhfd',
   MONGO_URL,
   FRONTEND_URL,
   CLOUDINARY_CLOUD_NAME,
