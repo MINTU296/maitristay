@@ -1,3 +1,4 @@
+// src/pages/LoginPage.jsx
 import { useContext, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import axios from "axios";
@@ -12,10 +13,15 @@ export default function LoginPage() {
   async function handleLoginSubmit(ev) {
     ev.preventDefault();
     try {
-      const { data } = await axios.post("/api/login", { email, password });
-      setUser(data);
+      const response = await axios.post(
+        "/api/login",
+        { email, password },
+        { withCredentials: true }           // ← include cookies
+      );
+      setUser(response.data);
       setRedirect(true);
     } catch (e) {
+      console.error("Login error:", e);
       alert("Login failed. Please check your credentials and try again.");
     }
   }
