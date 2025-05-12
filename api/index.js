@@ -1,8 +1,6 @@
 // index.js
 require('dotenv').config();
-import axios from 'axios';
-axios.defaults.baseURL = 'https://maitristayvmm.vercel.app';
-axios.defaults.withCredentials = true;
+
 const express      = require('express');
 const mongoose     = require('mongoose');
 const cors         = require('cors');
@@ -14,10 +12,10 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary   = require('cloudinary').v2;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Environment & Models
+// Environment Variables & Models
 // ──────────────────────────────────────────────────────────────────────────
 const {
-  JWT_SECRET     = 'kfslkfjlskjfls546546sfslk$3$%^jhfd',
+  JWT_SECRET     = 'ksjfs9874298^%$^#*&^*(^)(232654fgldklgkdflgjkls',
   MONGO_URL,
   FRONTEND_URL,
   CLOUDINARY_CLOUD_NAME,
@@ -32,7 +30,7 @@ const Place   = require('./models/Place');
 const Booking = require('./models/Booking');
 
 // ──────────────────────────────────────────────────────────────────────────
-// MongoDB connection
+// MongoDB Connection
 // ──────────────────────────────────────────────────────────────────────────
 async function connectMongo() {
   if (global.mongoose) return global.mongoose;
@@ -41,6 +39,7 @@ async function connectMongo() {
     useUnifiedTopology: true,
   }));
 }
+
 connectMongo()
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => {
@@ -49,14 +48,13 @@ connectMongo()
   });
 
 // ──────────────────────────────────────────────────────────────────────────
-// App & Middleware
+// Express App & Middleware
 // ──────────────────────────────────────────────────────────────────────────
 const app = express();
 
-// 1) CORS — must come before cookieParser & JSON parsing so preflight works
+// 1) CORS — must come before cookieParser & JSON parsing
 app.use(cors({
   origin: (origin, callback) => {
-    // allow direct server calls (e.g. mobile apps) if no origin header
     if (!origin) return callback(null, true);
     if (origin === FRONTEND_URL || origin.endsWith('.netlify.app')) {
       return callback(null, true);
@@ -66,32 +64,36 @@ app.use(cors({
   credentials: true,
 }));
 
-// 2) Parse cookies & JSON
+// 2) Cookie parser & JSON body parser
 app.use(cookieParser());
 app.use(express.json());
 
-// 3) Cloudinary + Multer setup (unchanged)
+// ──────────────────────────────────────────────────────────────────────────
+// Cloudinary + Multer Setup
+// ──────────────────────────────────────────────────────────────────────────
 cloudinary.config({
   cloud_name: CLOUDINARY_CLOUD_NAME,
   api_key:    CLOUDINARY_API_KEY,
   api_secret: CLOUDINARY_API_SECRET,
   secure:     true,
 });
+
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder: 'hotel-booking',
-    format: (_, file) => file.mimetype.split('/')[1],
+    folder:    'hotel-booking',
+    format:    (_, file) => file.mimetype.split('/')[1],
     public_id: () => Date.now().toString(),
   },
 });
+
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Auth helpers & middleware
+// Auth Helpers & Middleware
 // ──────────────────────────────────────────────────────────────────────────
 
-// Extract token from cookie or header
+// Extract JWT from cookie or Authorization header
 function getTokenFromReq(req) {
   if (req.cookies?.token) return req.cookies.token;
   const auth = req.headers?.authorization || '';
@@ -100,7 +102,7 @@ function getTokenFromReq(req) {
   return null;
 }
 
-// Verify JWT and return payload
+// Verify JWT, return payload or throw
 function getUserDataFromReq(req) {
   return new Promise((resolve, reject) => {
     const token = getTokenFromReq(req);
@@ -111,7 +113,7 @@ function getUserDataFromReq(req) {
   });
 }
 
-// Middleware to protect routes
+// Protect routes
 async function requireAuth(req, res, next) {
   try {
     const userData = await getUserDataFromReq(req);
@@ -126,10 +128,12 @@ async function requireAuth(req, res, next) {
 // ──────────────────────────────────────────────────────────────────────────
 // Routes
 // ──────────────────────────────────────────────────────────────────────────
+
+// Health check
 app.get('/', (_req, res) => res.send('🟢 API is up and running'));
 app.get('/api/test', (_req, res) => res.json({ ok: true }));
 
-// — Registration & Login (public) —
+// — Register
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -142,6 +146,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
+// — Login
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -173,7 +178,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// — Profile (public read) —
+// — Profile
 app.get('/api/profile', async (req, res) => {
   if (!req.cookies.token) return res.json(null);
   try {
@@ -187,13 +192,14 @@ app.get('/api/profile', async (req, res) => {
   }
 });
 
+// — Logout
 app.post('/api/logout', (_req, res) =>
   res
     .cookie('token', '', { expires: new Date(0) })
     .json({ ok: true })
 );
 
-// — Image uploads (public) —
+// — Upload by URL
 app.post('/api/upload-by-link', async (req, res) => {
   try {
     const { link } = req.body;
@@ -205,6 +211,7 @@ app.post('/api/upload-by-link', async (req, res) => {
   }
 });
 
+// — Upload from device
 app.post('/api/upload', upload.array('photos', 100), (req, res) => {
   try {
     const urls = req.files.map(f => f.path);
@@ -215,8 +222,7 @@ app.post('/api/upload', upload.array('photos', 100), (req, res) => {
   }
 });
 
-// — Places —
-// Public
+// — Places (public)
 app.get('/api/places', async (_req, res) => {
   try {
     const places = await Place.find();
@@ -226,6 +232,7 @@ app.get('/api/places', async (_req, res) => {
     res.status(500).json({ error: 'Failed to get places' });
   }
 });
+
 app.get('/api/places/:id', async (req, res) => {
   try {
     const place = await Place.findById(req.params.id);
@@ -237,7 +244,7 @@ app.get('/api/places/:id', async (req, res) => {
   }
 });
 
-// Protected
+// — Places (protected)
 app.get('/api/user-places', requireAuth, async (req, res) => {
   try {
     const places = await Place.find({ owner: req.user.id });
@@ -258,6 +265,7 @@ app.post('/api/places', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to create place' });
   }
 });
+
 app.put('/api/places', requireAuth, async (req, res) => {
   try {
     const place = await Place.findById(req.body.id);
@@ -274,14 +282,10 @@ app.put('/api/places', requireAuth, async (req, res) => {
   }
 });
 
-// — Bookings —
-// Create
+// — Bookings
 app.post('/api/bookings', requireAuth, async (req, res) => {
   try {
-    const bookingData = {
-      ...req.body,
-      user: req.user.id,
-    };
+    const bookingData = { ...req.body, user: req.user.id };
     const doc = await Booking.create(bookingData);
     res.json(doc);
   } catch (err) {
@@ -289,12 +293,10 @@ app.post('/api/bookings', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to create booking' });
   }
 });
-// List
+
 app.get('/api/bookings', requireAuth, async (req, res) => {
   try {
-    const bookings = await Booking
-      .find({ user: req.user.id })
-      .populate('place');
+    const bookings = await Booking.find({ user: req.user.id }).populate('place');
     res.json(bookings);
   } catch (err) {
     console.error('Get bookings error:', err);
@@ -303,7 +305,7 @@ app.get('/api/bookings', requireAuth, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Global error handler (last middleware)
+// Global Error Handler (last middleware)
 // ──────────────────────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
@@ -311,9 +313,10 @@ app.use((err, _req, res, _next) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Start server in development; export for Vercel
+// Start Server (development) or export for production
 // ──────────────────────────────────────────────────────────────────────────
 if (NODE_ENV !== 'production') {
   app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
 }
+
 module.exports = app;
