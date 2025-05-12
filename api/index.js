@@ -282,8 +282,16 @@ app.get('/api/user-places', requireAuth, async (req, res) => {
 // Create a new place
 app.post('/api/places', requireAuth, async (req, res) => {
   try {
-    const data = { owner: req.user.id, ...req.body };
-    const doc = await Place.create(data);
+    // pull out addedPhotos from the body
+    const { addedPhotos, ...rest } = req.body;
+    const placeData = {
+      owner: req.user.id,
+      // Photos must go into the schema field named `photos`
+      photos: Array.isArray(addedPhotos) ? addedPhotos : [],
+      // everything else (title, address, etc)
+      ...rest,
+    };
+    const doc = await Place.create(placeData);
     res.json(doc);
   } catch (err) {
     console.error('Create place error:', err);
@@ -299,7 +307,11 @@ app.put('/api/places', requireAuth, async (req, res) => {
     if (place.owner.toString() !== req.user.id) {
       return res.status(403).json({ error: 'Not owner' });
     }
-    Object.assign(place, req.body);
+    // pull out addedPhotos and assign to photos
+    const { addedPhotos, ...rest } = req.body;
+    place.photos = Array.isArray(addedPhotos) ? addedPhotos : place.photos;
+    // assign all the other fields
+    Object.assign(place, rest);
     await place.save();
     res.json({ ok: true });
   } catch (err) {
@@ -307,6 +319,7 @@ app.put('/api/places', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to update place' });
   }
 });
+
 
 // Create a booking
 app.post('/api/bookings', requireAuth, async (req, res) => {

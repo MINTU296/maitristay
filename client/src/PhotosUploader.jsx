@@ -17,27 +17,29 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
       const { data } = await axios.post("/api/upload-by-link", {
         link: photoLink,
       });
-      // data.urls is an array of strings
-      onChange((prev) => [...prev, ...data.urls]);
+      // ensure it's an array of strings
+      const urls = Array.isArray(data.urls) ? data.urls : [];
+      onChange((prev) => [...prev, ...urls]);
       setPhotoLink("");
     } catch (err) {
-      console.error("Link upload failed", err);
+      console.error("Link upload failed:", err);
     }
   }
 
   // 2) Upload from local device
   async function uploadPhoto(ev) {
     const files = ev.target.files;
-    if (files.length === 0) return;
+    if (!files?.length) return;
     const formData = new FormData();
     for (let file of files) formData.append("photos", file);
     try {
       const { data } = await axios.post("/api/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      onChange((prev) => [...prev, ...data.urls]);
+      const urls = Array.isArray(data.urls) ? data.urls : [];
+      onChange((prev) => [...prev, ...urls]);
     } catch (err) {
-      console.error("File upload failed", err);
+      console.error("File upload failed:", err);
     }
   }
 
@@ -59,12 +61,15 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
       <div className="flex gap-2">
         <input
           type="text"
-          placeholder="Add using a link …"
+          placeholder="Add using a link…"
           value={photoLink}
           onChange={(e) => setPhotoLink(e.target.value)}
           className="grow border rounded p-2"
         />
-        <button onClick={addPhotoByLink} className="bg-gray-200 px-4 rounded-2xl">
+        <button
+          onClick={addPhotoByLink}
+          className="bg-gray-200 px-4 rounded-2xl"
+        >
           Add photo
         </button>
       </div>
