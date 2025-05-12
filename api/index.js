@@ -1,5 +1,10 @@
 // index.js
-require('dotenv').config();
+// ─────────────────────────────────────────────────────────────────────────────
+// Entry point for the Hotel Booking API
+// Uses Express, MongoDB (via Mongoose), JWT-based auth, and Cloudinary for image storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+require('dotenv').config();                   // Load environment variables from .env
 
 const express      = require('express');
 const mongoose     = require('mongoose');
@@ -11,13 +16,13 @@ const multer       = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary   = require('cloudinary').v2;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Environment & Models
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment Variables & Model Imports
+// ─────────────────────────────────────────────────────────────────────────────
 const {
-  JWT_SECRET     = 'change_this_in_production',     // override in .env / Vercel settings
-  MONGO_URL,
-  FRONTEND_URL,                                      // e.g. https://amazing-muffin-6bb16a.netlify.app
+  JWT_SECRET     = 'change_this_in_production',       // Replace in production!
+  MONGO_URL,                                         // MongoDB connection string
+  FRONTEND_URL,                                      // e.g. https://your-site.netlify.app
   CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET,
@@ -29,15 +34,16 @@ const User    = require('./models/User');
 const Place   = require('./models/Place');
 const Booking = require('./models/Booking');
 
-// ──────────────────────────────────────────────────────────────────────────
-// MongoDB Connection
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Connect to MongoDB
+// ─────────────────────────────────────────────────────────────────────────────
 async function connectMongo() {
-  if (global.mongoose) return global.mongoose;
-  return (global.mongoose = await mongoose.connect(MONGO_URL, {
+  if (global.mongoose) return global.mongoose;       // Reuse existing connection
+  global.mongoose = await mongoose.connect(MONGO_URL, {
     useNewUrlParser:    true,
     useUnifiedTopology: true,
-  }));
+  });
+  return global.mongoose;
 }
 
 connectMongo()
@@ -47,31 +53,32 @@ connectMongo()
     process.exit(1);
   });
 
-// ──────────────────────────────────────────────────────────────────────────
-// App & Middleware
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Create Express App & Middleware
+// ─────────────────────────────────────────────────────────────────────────────
 const app = express();
 
-// 1) CORS (must come before cookieParser & JSON parsing)
+// --- CORS ---
+// Allow our frontend (Netlify) and any requests with no origin (e.g., mobile)
 app.use(cors({
   origin: (origin, callback) => {
-    // allow requests with no origin (mobile apps, curl, etc)
     if (!origin) return callback(null, true);
     if (origin === FRONTEND_URL || origin.endsWith('.netlify.app')) {
       return callback(null, true);
     }
     callback(new Error(`CORS policy: origin ${origin} not allowed`));
   },
-  credentials: true,  // <-- allows cookies to be sent/received
+  credentials: true,      // Allow cookies (JWT) to be sent/received
 }));
 
-// 2) Parse cookies and JSON bodies
+// --- Parsing ---
+// Cookie parser for JWT cookie, and JSON body parser
 app.use(cookieParser());
 app.use(express.json());
 
-// ──────────────────────────────────────────────────────────────────────────
-// Cloudinary + Multer Setup
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Configure Cloudinary + Multer for Image Uploads
+// ─────────────────────────────────────────────────────────────────────────────
 cloudinary.config({
   cloud_name: CLOUDINARY_CLOUD_NAME,
   api_key:    CLOUDINARY_API_KEY,
@@ -79,6 +86,7 @@ cloudinary.config({
   secure:     true,
 });
 
+// Store uploads under `hotel-booking` folder, preserve file type by mimetype
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
@@ -87,13 +95,15 @@ const storage = new CloudinaryStorage({
     public_id: () => Date.now().toString(),
   },
 });
+
+// Limit individual file size to 5MB
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-// ──────────────────────────────────────────────────────────────────────────
-// Auth Helpers & Middleware
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Authentication Helpers & Middleware
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Extract token from cookie or Authorization header
+// Extract JWT token from either HTTP-only cookie or Authorization header
 function getTokenFromReq(req) {
   if (req.cookies?.token) return req.cookies.token;
   const auth = req.headers.authorization || '';
@@ -101,7 +111,7 @@ function getTokenFromReq(req) {
   return scheme === 'Bearer' && token ? token : null;
 }
 
-// Verify JWT, return payload or throw
+// Verify JWT and return decoded payload, or reject if invalid/missing
 function getUserDataFromReq(req) {
   return new Promise((resolve, reject) => {
     const token = getTokenFromReq(req);
@@ -112,11 +122,10 @@ function getUserDataFromReq(req) {
   });
 }
 
-// Middleware to protect routes
+// Middleware to protect routes: ensures req.user is set or returns 401
 async function requireAuth(req, res, next) {
   try {
-    const userData = await getUserDataFromReq(req);
-    req.user = userData;
+    req.user = await getUserDataFromReq(req);
     next();
   } catch (err) {
     console.error('Auth error:', err.message);
@@ -124,50 +133,52 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Routes
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Public Routes
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Health check
 app.get('/', (_req, res) => res.send('🟢 API is up and running'));
 app.get('/api/test', (_req, res) => res.json({ ok: true }));
 
-// — Register
+// Register a new user
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
     const hashed = bcrypt.hashSync(password, bcrypt.genSaltSync(10));
-    const userDoc = await User.create({ name, email, password: hashed });
-    res.json(userDoc);
+    const user = await User.create({ name, email, password: hashed });
+    res.json(user);
   } catch (e) {
     console.error('Register error:', e);
     res.status(422).json({ error: e.message });
   }
 });
 
-// — Login
+// Login and set JWT cookie
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const userDoc = await User.findOne({ email });
-    if (!userDoc) return res.status(404).json({ error: 'User not found' });
-    if (!bcrypt.compareSync(password, userDoc.password)) {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (!bcrypt.compareSync(password, user.password)) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     jwt.sign(
-      { email: userDoc.email, id: userDoc._id },
+      { email: user.email, id: user._id },
       JWT_SECRET,
       {},
       (err, token) => {
         if (err) throw err;
+        // Set HTTP-only cookie with SameSite=None to allow cross-site in prod
         res
           .cookie('token', token, {
             httpOnly: true,
-            secure: NODE_ENV === 'production',                     // must be true if SameSite=None
-            sameSite: NODE_ENV === 'production' ? 'none' : 'lax',  // cross-site allowed in prod
+            secure: NODE_ENV === 'production',
+            sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
           })
-          .json(userDoc);
+          .json({ id: user._id, name: user.name, email: user.email });
       }
     );
   } catch (err) {
@@ -176,46 +187,63 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// — Profile (public read)
+// Get current user profile, or null if not logged in
 app.get('/api/profile', async (req, res) => {
   if (!req.cookies.token) return res.json(null);
   try {
-    const userData = await getUserDataFromReq(req);
-    const user = await User.findById(userData.id);
+    const data = await getUserDataFromReq(req);
+    const user = await User.findById(data.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ name: user.name, email: user.email, _id: user._id });
+    res.json({ id: user._id, name: user.name, email: user.email });
   } catch (err) {
     console.error('Profile error:', err);
     res.status(401).json({ error: 'Invalid token' });
   }
 });
 
-// — Logout
+// Logout by clearing the cookie
 app.post('/api/logout', (_req, res) =>
-  res
-    .cookie('token', '', { expires: new Date(0) })
-    .json({ ok: true })
+  res.cookie('token', '', { expires: new Date(0) }).json({ ok: true })
 );
 
-// — Upload by URL
+// ─────────────────────────────────────────────────────────────────────────────
+// Image Upload Endpoints
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Upload by providing an external URL
 app.post('/api/upload-by-link', async (req, res) => {
   try {
     const { link } = req.body;
-    const result = await cloudinary.uploader.upload(link, { folder: 'hotel-booking' });
-    res.json({ url: result.secure_url });
+    const result = await cloudinary.uploader.upload(link, {
+      folder: 'hotel-booking',
+    });
+    // Return in a uniform shape
+    res.json({ urls: [result.secure_url] });
   } catch (err) {
     console.error('Upload-by-link error:', err);
     res.status(500).json({ error: 'Upload failed' });
   }
 });
 
-// — Upload from device
-app.post('/api/upload', upload.array('photos', 100), (_req, res) => {
-  const urls = _req.files.map(f => f.path);
-  res.json({ urls });
+// Upload files from the device via multipart/form-data
+app.post('/api/upload', upload.array('photos', 100), (req, res) => {
+  try {
+    // Extract secure_url (preferred) or path from each file object
+    const urls = req.files
+      .map(f => f.secure_url || f.path || '')
+      .filter(u => u);
+    res.json({ urls });
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: 'Upload failed' });
+  }
 });
 
-// — Public Places
+// ─────────────────────────────────────────────────────────────────────────────
+// Place & Booking CRUD Routes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fetch all places (public)
 app.get('/api/places', async (_req, res) => {
   try {
     const places = await Place.find();
@@ -226,6 +254,7 @@ app.get('/api/places', async (_req, res) => {
   }
 });
 
+// Fetch a single place by ID (public)
 app.get('/api/places/:id', async (req, res) => {
   try {
     const place = await Place.findById(req.params.id);
@@ -237,7 +266,9 @@ app.get('/api/places/:id', async (req, res) => {
   }
 });
 
-// — Protected Places
+// Below routes require authentication (JWT cookie)
+
+// List places owned by current user
 app.get('/api/user-places', requireAuth, async (req, res) => {
   try {
     const places = await Place.find({ owner: req.user.id });
@@ -248,6 +279,7 @@ app.get('/api/user-places', requireAuth, async (req, res) => {
   }
 });
 
+// Create a new place
 app.post('/api/places', requireAuth, async (req, res) => {
   try {
     const data = { owner: req.user.id, ...req.body };
@@ -259,6 +291,7 @@ app.post('/api/places', requireAuth, async (req, res) => {
   }
 });
 
+// Update an existing place
 app.put('/api/places', requireAuth, async (req, res) => {
   try {
     const place = await Place.findById(req.body.id);
@@ -275,7 +308,7 @@ app.put('/api/places', requireAuth, async (req, res) => {
   }
 });
 
-// — Bookings
+// Create a booking
 app.post('/api/bookings', requireAuth, async (req, res) => {
   try {
     const bookingData = { ...req.body, user: req.user.id };
@@ -287,6 +320,7 @@ app.post('/api/bookings', requireAuth, async (req, res) => {
   }
 });
 
+// List bookings for current user
 app.get('/api/bookings', requireAuth, async (req, res) => {
   try {
     const bookings = await Booking.find({ user: req.user.id }).populate('place');
@@ -297,18 +331,19 @@ app.get('/api/bookings', requireAuth, async (req, res) => {
   }
 });
 
-// ──────────────────────────────────────────────────────────────────────────
-// Global Error Handler
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Global Error Handler (last middleware)
+// ─────────────────────────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: err.message || 'Internal Server Error' });
 });
 
-// ──────────────────────────────────────────────────────────────────────────
-// Start server in dev, export for production
-// ──────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Start server in development; export `app` for production (Vercel)
+// ─────────────────────────────────────────────────────────────────────────────
 if (NODE_ENV !== 'production') {
   app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
 }
+
 module.exports = app;
