@@ -1,4 +1,5 @@
-import { useParams } from "react-router-dom";
+// src/pages/BookingPage.jsx
+import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import axios from "axios";
 import AddressLink from "../AddressLink";
@@ -7,24 +8,29 @@ import BookingDates from "../BookingDates";
 
 export default function BookingPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [booking, setBooking] = useState(null);
 
   useEffect(() => {
-    if (id) {
-      axios.get('/api/bookings', { withCredentials: true })
-        .then(response => {
-          const found = response.data.find(b => b._id === id);
-          if (found) setBooking(found);
-        })
-        .catch(err => {
-          console.error('Error loading booking:', err);
-          // handle 401
-          if (err.response?.status === 401) {
-            window.location.href = '/login';
-          }
-        });
-    }
-  }, [id]);
+    if (!id) return;
+    axios
+      .get("/api/bookings", { withCredentials: true })
+      .then((response) => {
+        const found = response.data.find((b) => b._id === id);
+        if (found) {
+          setBooking(found);
+        } else {
+          // if there's no booking with this id, maybe redirect back
+          navigate("/account/bookings");
+        }
+      })
+      .catch((err) => {
+        console.error("Error loading booking:", err);
+        if (err.response?.status === 401) {
+          navigate("/login");
+        }
+      });
+  }, [id, navigate]);
 
   if (!booking) {
     return (
