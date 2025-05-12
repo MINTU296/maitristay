@@ -1,11 +1,10 @@
-// PhotoUploader.jsx
 import axios from "axios";
 import { useState } from "react";
 import Image from "./Image.jsx";
 
 /**
- * @param {string[]} addedPhotos    — array of photo URLs
- * @param {(photos: string[])=>void} onChange  — callback to update parent state
+ * @param {string[]} addedPhotos
+ * @param {(photos: string[]) => void} onChange
  */
 export default function PhotosUploader({ addedPhotos, onChange }) {
   const [photoLink, setPhotoLink] = useState("");
@@ -15,11 +14,10 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
     ev.preventDefault();
     if (!photoLink) return;
     try {
-      // backend returns { urls: [secureUrl] }
       const { data } = await axios.post("/api/upload-by-link", {
         link: photoLink,
       });
-      // append all returned URLs
+      // data.urls is an array of strings
       onChange((prev) => [...prev, ...data.urls]);
       setPhotoLink("");
     } catch (err) {
@@ -27,16 +25,13 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
     }
   }
 
-  // 2) Upload from local files
+  // 2) Upload from local device
   async function uploadPhoto(ev) {
     const files = ev.target.files;
     if (files.length === 0) return;
     const formData = new FormData();
-    for (let file of files) {
-      formData.append("photos", file);
-    }
+    for (let file of files) formData.append("photos", file);
     try {
-      // backend returns { urls: [secureUrl1, secureUrl2, …] }
       const { data } = await axios.post("/api/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -52,7 +47,7 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
     onChange(addedPhotos.filter((photo) => photo !== link));
   }
 
-  // 4) Mark a photo as primary
+  // 4) Mark a photo as main
   function selectAsMainPhoto(ev, link) {
     ev.preventDefault();
     onChange([link, ...addedPhotos.filter((photo) => photo !== link)]);
@@ -69,11 +64,8 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
           onChange={(e) => setPhotoLink(e.target.value)}
           className="grow border rounded p-2"
         />
-        <button
-          onClick={addPhotoByLink}
-          className="bg-gray-200 px-4 rounded-2xl"
-        >
-          Add&nbsp;photo
+        <button onClick={addPhotoByLink} className="bg-gray-200 px-4 rounded-2xl">
+          Add photo
         </button>
       </div>
 
