@@ -20,7 +20,7 @@ const Booking = require('./models/Booking');
 // Configuration
 // ──────────────────────────────────────────────────────────────────────────
 const {
-  JWT_SECRET     = 'change_this_in_production',
+  JWT_SECRET     = 'ksjfhks5465465465465656646sfssfs',
   MONGO_URL,
   FRONTEND_URL,
   CLOUDINARY_CLOUD_NAME,
