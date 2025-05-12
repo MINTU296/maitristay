@@ -45,7 +45,22 @@ connectMongo().catch(err => {
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
-app.use(cors({ credentials: true, origin: FRONTEND_URL }));
+
+// ──────────────────────────────────────────────────────────────────────────
+// CORS configuration: allow any Netlify origin and optional custom domain
+// ──────────────────────────────────────────────────────────────────────────
+app.use(cors({
+  origin: (origin, callback) => {
+    // allow requests with no origin (e.g., mobile apps, curl)
+    if (!origin) return callback(null, true);
+    // allow Netlify-hosted preview and production domains
+    if (origin.endsWith('.netlify.app') || origin === FRONTEND_URL) {
+      return callback(null, true);
+    }
+    callback(new Error(`CORS policy: origin ${origin} not allowed`));
+  },
+  credentials: true,
+}));
 
 // ── Cloudinary + Multer
 cloudinary.config({
