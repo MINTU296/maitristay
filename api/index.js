@@ -12,12 +12,12 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary   = require('cloudinary').v2;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Environment Variables & Models
+// Environment & Models
 // ──────────────────────────────────────────────────────────────────────────
 const {
-  JWT_SECRET     = 'ksjfs9874298^%$^#*&^*(^)(232654fgldklgkdflgjkls',
+  JWT_SECRET     = 'change_this_in_production',     // override in .env / Vercel settings
   MONGO_URL,
-  FRONTEND_URL,
+  FRONTEND_URL,                                      // e.g. https://amazing-muffin-6bb16a.netlify.app
   CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET,
@@ -48,23 +48,24 @@ connectMongo()
   });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Express App & Middleware
+// App & Middleware
 // ──────────────────────────────────────────────────────────────────────────
 const app = express();
 
-// 1) CORS — must come before cookieParser & JSON parsing
+// 1) CORS (must come before cookieParser & JSON parsing)
 app.use(cors({
   origin: (origin, callback) => {
+    // allow requests with no origin (mobile apps, curl, etc)
     if (!origin) return callback(null, true);
     if (origin === FRONTEND_URL || origin.endsWith('.netlify.app')) {
       return callback(null, true);
     }
     callback(new Error(`CORS policy: origin ${origin} not allowed`));
   },
-  credentials: true,
+  credentials: true,  // <-- allows cookies to be sent/received
 }));
 
-// 2) Cookie parser & JSON body parser
+// 2) Parse cookies and JSON bodies
 app.use(cookieParser());
 app.use(express.json());
 
@@ -81,25 +82,23 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder:    'hotel-booking',
-    format:    (_, file) => file.mimetype.split('/')[1],
+    folder: 'hotel-booking',
+    format: (_, file) => file.mimetype.split('/')[1],
     public_id: () => Date.now().toString(),
   },
 });
-
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ──────────────────────────────────────────────────────────────────────────
 // Auth Helpers & Middleware
 // ──────────────────────────────────────────────────────────────────────────
 
-// Extract JWT from cookie or Authorization header
+// Extract token from cookie or Authorization header
 function getTokenFromReq(req) {
   if (req.cookies?.token) return req.cookies.token;
-  const auth = req.headers?.authorization || '';
+  const auth = req.headers.authorization || '';
   const [scheme, token] = auth.split(' ');
-  if (scheme === 'Bearer' && token) return token;
-  return null;
+  return scheme === 'Bearer' && token ? token : null;
 }
 
 // Verify JWT, return payload or throw
@@ -113,7 +112,7 @@ function getUserDataFromReq(req) {
   });
 }
 
-// Protect routes
+// Middleware to protect routes
 async function requireAuth(req, res, next) {
   try {
     const userData = await getUserDataFromReq(req);
@@ -152,7 +151,6 @@ app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     const userDoc = await User.findOne({ email });
     if (!userDoc) return res.status(404).json({ error: 'User not found' });
-
     if (!bcrypt.compareSync(password, userDoc.password)) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -166,8 +164,8 @@ app.post('/api/login', async (req, res) => {
         res
           .cookie('token', token, {
             httpOnly: true,
-            secure: NODE_ENV === 'production',
-            sameSite: 'strict',
+            secure: NODE_ENV === 'production',                     // must be true if SameSite=None
+            sameSite: NODE_ENV === 'production' ? 'none' : 'lax',  // cross-site allowed in prod
           })
           .json(userDoc);
       }
@@ -178,7 +176,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// — Profile
+// — Profile (public read)
 app.get('/api/profile', async (req, res) => {
   if (!req.cookies.token) return res.json(null);
   try {
@@ -212,17 +210,12 @@ app.post('/api/upload-by-link', async (req, res) => {
 });
 
 // — Upload from device
-app.post('/api/upload', upload.array('photos', 100), (req, res) => {
-  try {
-    const urls = req.files.map(f => f.path);
-    res.json({ urls });
-  } catch (err) {
-    console.error('Upload error:', err);
-    res.status(500).json({ error: 'Upload failed' });
-  }
+app.post('/api/upload', upload.array('photos', 100), (_req, res) => {
+  const urls = _req.files.map(f => f.path);
+  res.json({ urls });
 });
 
-// — Places (public)
+// — Public Places
 app.get('/api/places', async (_req, res) => {
   try {
     const places = await Place.find();
@@ -244,7 +237,7 @@ app.get('/api/places/:id', async (req, res) => {
   }
 });
 
-// — Places (protected)
+// — Protected Places
 app.get('/api/user-places', requireAuth, async (req, res) => {
   try {
     const places = await Place.find({ owner: req.user.id });
@@ -305,7 +298,7 @@ app.get('/api/bookings', requireAuth, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Global Error Handler (last middleware)
+// Global Error Handler
 // ──────────────────────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
@@ -313,10 +306,9 @@ app.use((err, _req, res, _next) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Start Server (development) or export for production
+// Start server in dev, export for production
 // ──────────────────────────────────────────────────────────────────────────
 if (NODE_ENV !== 'production') {
   app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
 }
-
 module.exports = app;
