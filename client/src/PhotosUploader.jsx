@@ -1,31 +1,33 @@
+// PhotoUploader.jsx
 import axios from "axios";
 import { useState } from "react";
 import Image from "./Image.jsx";
 
 /**
- * @param {string[]} addedPhotos
- * @param {(photos: string[]) => void} onChange
+ * @param {string[]} addedPhotos    — array of photo URLs
+ * @param {(photos: string[])=>void} onChange  — callback to update parent state
  */
 export default function PhotosUploader({ addedPhotos, onChange }) {
   const [photoLink, setPhotoLink] = useState("");
 
-  // Upload by external link
+  // 1) Add by external link
   async function addPhotoByLink(ev) {
     ev.preventDefault();
     if (!photoLink) return;
     try {
+      // backend returns { urls: [secureUrl] }
       const { data } = await axios.post("/api/upload-by-link", {
         link: photoLink,
       });
-      // data.url is a string
-      onChange((prev) => [...prev, data.url]);
+      // append all returned URLs
+      onChange((prev) => [...prev, ...data.urls]);
       setPhotoLink("");
     } catch (err) {
       console.error("Link upload failed", err);
     }
   }
 
-  // Upload from local device
+  // 2) Upload from local files
   async function uploadPhoto(ev) {
     const files = ev.target.files;
     if (files.length === 0) return;
@@ -34,23 +36,23 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
       formData.append("photos", file);
     }
     try {
+      // backend returns { urls: [secureUrl1, secureUrl2, …] }
       const { data } = await axios.post("/api/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      // data.urls is an array of strings
       onChange((prev) => [...prev, ...data.urls]);
     } catch (err) {
       console.error("File upload failed", err);
     }
   }
 
-  // Remove a photo
+  // 3) Remove a photo
   function removePhoto(ev, link) {
     ev.preventDefault();
     onChange(addedPhotos.filter((photo) => photo !== link));
   }
 
-  // Mark main photo
+  // 4) Mark a photo as primary
   function selectAsMainPhoto(ev, link) {
     ev.preventDefault();
     onChange([link, ...addedPhotos.filter((photo) => photo !== link)]);
@@ -64,14 +66,14 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
           type="text"
           placeholder="Add using a link …"
           value={photoLink}
-          onChange={(ev) => setPhotoLink(ev.target.value)}
+          onChange={(e) => setPhotoLink(e.target.value)}
           className="grow border rounded p-2"
         />
         <button
           onClick={addPhotoByLink}
           className="bg-gray-200 px-4 rounded-2xl"
         >
-          Add photo
+          Add&nbsp;photo
         </button>
       </div>
 
@@ -85,13 +87,13 @@ export default function PhotosUploader({ addedPhotos, onChange }) {
               className="w-full h-full object-cover rounded-2xl"
             />
             <button
-              onClick={(ev) => removePhoto(ev, link)}
+              onClick={(e) => removePhoto(e, link)}
               className="absolute bottom-1 right-1 bg-black bg-opacity-50 text-white p-1 rounded-full"
             >
               🗑
             </button>
             <button
-              onClick={(ev) => selectAsMainPhoto(ev, link)}
+              onClick={(e) => selectAsMainPhoto(e, link)}
               className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white p-1 rounded-full"
             >
               {link === addedPhotos[0] ? "★" : "☆"}
