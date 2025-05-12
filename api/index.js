@@ -51,9 +51,7 @@ app.use(cookieParser());
 // ──────────────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: (origin, callback) => {
-    // allow requests with no origin (e.g., mobile apps, curl)
-    if (!origin) return callback(null, true);
-    // allow Netlify-hosted preview and production domains
+    if (!origin) return callback(null, true);  // non-browser clients
     if (origin.endsWith('.netlify.app') || origin === FRONTEND_URL) {
       return callback(null, true);
     }
@@ -113,7 +111,7 @@ app.post('/api/register', async (req, res) => {
     });
     res.json(userDoc);
   } catch (e) {
-    res.status(422).json(e.message);
+    res.status(422).json({ error: e.message });
   }
 });
 
@@ -122,27 +120,21 @@ app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const userDoc = await User.findOne({ email });
-    if (!userDoc) return res.status(404).json('User not found');
+    if (!userDoc) return res.status(404).json({ error: 'User not found' });
     const passOk = bcrypt.compareSync(password, userDoc.password);
-    if (!passOk) return res.status(401).json('Invalid credentials');
+    if (!passOk) return res.status(401).json({ error: 'Invalid credentials' });
 
-    jwt.sign(
-      { email: userDoc.email, id: userDoc._id },
-      jwtSecret,
-      {},
-      (err, token) => {
-        if (err) throw err;
-        res
-          .cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-          })
-          .json(userDoc);
-      }
-    );
+    jwt.sign({ email: userDoc.email, id: userDoc._id }, jwtSecret, {}, (err, token) => {
+      if (err) throw err;
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+      }).json(userDoc);
+    });
   } catch (err) {
-    res.status(500).json('Login failed');
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 
@@ -152,26 +144,26 @@ app.get('/api/profile', async (req, res) => {
     if (!req.cookies.token) return res.json(null);
     const userData = await getUserDataFromReq(req);
     const user = await User.findById(userData.id);
-    if (!user) return res.status(404).json('User not found');
+    if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ name: user.name, email: user.email, _id: user._id });
-  } catch {
-    res.status(401).json('Invalid token');
+  } catch (err) {
+    console.error('Profile error:', err);
+    res.status(401).json({ error: 'Invalid token' });
   }
 });
 
 // Logout
-app.post('/api/logout', (_req, res) =>
-  res.cookie('token', '', { expires: new Date(0) }).json(true)
-);
+app.post('/api/logout', (_req, res) => res.cookie('token', '', { expires: new Date(0) }).json(true));
 
 // Upload by URL
 app.post('/api/upload-by-link', async (req, res) => {
   try {
     const { link } = req.body;
     const result = await cloudinary.uploader.upload(link, { folder: 'hotel-booking' });
-    res.json(result.secure_url);
-  } catch {
-    res.status(500).json('Upload failed');
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    console.error('Upload by link error:', err);
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 
@@ -179,9 +171,10 @@ app.post('/api/upload-by-link', async (req, res) => {
 app.post('/api/upload', upload.array('photos', 100), (req, res) => {
   try {
     const urls = req.files.map(f => f.path);
-    res.json(urls);
-  } catch {
-    res.status(500).json('Upload failed');
+    res.json({ urls });
+  } catch (err) {
+    console.error('Upload from device error:', err);
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 
@@ -190,9 +183,10 @@ app.get('/api/user-places', async (req, res) => {
   try {
     const userData = await getUserDataFromReq(req);
     const places = await Place.find({ owner: userData.id });
-    res.json(places);
-  } catch {
-    res.status(500).json('Failed to get user places');
+    res.json({ places });
+  } catch (err) {
+    console.error('User places error:', err);
+    res.status(500).json({ error: 'Failed to get user places' });
   }
 });
 
@@ -200,19 +194,28 @@ app.get('/api/user-places', async (req, res) => {
 app.get('/api/places', async (_req, res) => {
   try {
     const places = await Place.find();
-    res.json(places);
-  } catch {
-    res.status(500).json('Failed to get places');
+    res.json({ places });
+  } catch (err) {
+    console.error('All places error:', err);
+    res.status(500).json({ error: 'Failed to get places' });
   }
 });
 
-// Place by ID
+// Place by ID with robust error handling
 app.get('/api/places/:id', async (req, res) => {
   try {
-    const place = await Place.findById(req.params.id);
-    res.json(place);
-  } catch {
-    res.status(500).json('Failed to get place');
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid place ID' });
+    }
+    const place = await Place.findById(id);
+    if (!place) {
+      return res.status(404).json({ error: 'Place not found' });
+    }
+    res.json({ place });
+  } catch (err) {
+    console.error('Fetch place by ID error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -220,26 +223,12 @@ app.get('/api/places/:id', async (req, res) => {
 app.post('/api/places', async (req, res) => {
   try {
     const userData = await getUserDataFromReq(req);
-    const {
-      title, address, addedPhotos, description,
-      perks, extraInfo, checkIn, checkOut, maxGuests, price,
-    } = req.body;
-    const doc = await Place.create({
-      owner: userData.id,
-      title,
-      address,
-      photos: addedPhotos,
-      description,
-      perks,
-      extraInfo,
-      checkIn,
-      checkOut,
-      maxGuests,
-      price,
-    });
-    res.json(doc);
-  } catch {
-    res.status(401).json('Unauthorized');
+    const { title, address, addedPhotos, description, perks, extraInfo, checkIn, checkOut, maxGuests, price } = req.body;
+    const doc = await Place.create({ owner: userData.id, title, address, photos: addedPhotos, description, perks, extraInfo, checkIn, checkOut, maxGuests, price });
+    res.json({ place: doc });
+  } catch (err) {
+    console.error('Create place error:', err);
+    res.status(401).json({ error: 'Unauthorized' });
   }
 });
 
@@ -247,23 +236,18 @@ app.post('/api/places', async (req, res) => {
 app.put('/api/places', async (req, res) => {
   try {
     const userData = await getUserDataFromReq(req);
-    const {
-      id, title, address, addedPhotos, description,
-      perks, extraInfo, checkIn, checkOut, maxGuests, price,
-    } = req.body;
+    const { id, title, address, addedPhotos, description, perks, extraInfo, checkIn, checkOut, maxGuests, price } = req.body;
     const place = await Place.findById(id);
-    if (!place) return res.status(404).json('Place not found');
+    if (!place) return res.status(404).json({ error: 'Place not found' });
     if (place.owner.toString() !== userData.id) {
-      return res.status(403).json('Not owner');
+      return res.status(403).json({ error: 'Not owner' });
     }
-    place.set({
-      title, address, photos: addedPhotos, description,
-      perks, extraInfo, checkIn, checkOut, maxGuests, price,
-    });
+    place.set({ title, address, photos: addedPhotos, description, perks, extraInfo, checkIn, checkOut, maxGuests, price });
     await place.save();
-    res.json('ok');
-  } catch {
-    res.status(500).json('Failed to update place');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update place error:', err);
+    res.status(500).json({ error: 'Failed to update place' });
   }
 });
 
@@ -271,16 +255,12 @@ app.put('/api/places', async (req, res) => {
 app.post('/api/bookings', async (req, res) => {
   try {
     const userData = await getUserDataFromReq(req);
-    const {
-      place, checkIn, checkOut, numberOfGuests, name, phone, price,
-    } = req.body;
-    const doc = await Booking.create({
-      place, checkIn, checkOut, numberOfGuests, name, phone, price,
-      user: userData.id,
-    });
-    res.json(doc);
-  } catch {
-    res.status(500).json('Failed to create booking');
+    const { place, checkIn, checkOut, numberOfGuests, name, phone, price } = req.body;
+    const doc = await Booking.create({ place, checkIn, checkOut, numberOfGuests, name, phone, price, user: userData.id });
+    res.json({ booking: doc });
+  } catch (err) {
+    console.error('Create booking error:', err);
+    res.status(500).json({ error: 'Failed to create booking' });
   }
 });
 
@@ -289,9 +269,10 @@ app.get('/api/bookings', async (req, res) => {
   try {
     const userData = await getUserDataFromReq(req);
     const bookings = await Booking.find({ user: userData.id }).populate('place');
-    res.json(bookings);
-  } catch {
-    res.status(500).json('Failed to get bookings');
+    res.json({ bookings });
+  } catch (err) {
+    console.error('User bookings error:', err);
+    res.status(500).json({ error: 'Failed to get bookings' });
   }
 });
 
