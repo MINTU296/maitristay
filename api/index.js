@@ -11,16 +11,11 @@ const multer       = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary   = require('cloudinary').v2;
 
-// Models
-const User    = require('./models/User');
-const Place   = require('./models/Place');
-const Booking = require('./models/Booking');
-
 // ──────────────────────────────────────────────────────────────────────────
-// Configuration
+// Environment & Models
 // ──────────────────────────────────────────────────────────────────────────
 const {
-  JWT_SECRET     = 'ksjfhks5465465465465656646sfssfs',
+  JWT_SECRET     = 'change_this_in_production',
   MONGO_URL,
   FRONTEND_URL,
   CLOUDINARY_CLOUD_NAME,
@@ -30,21 +25,20 @@ const {
   PORT = 5000,
 } = process.env;
 
-const bcryptSalt = bcrypt.genSaltSync(10);
+const User    = require('./models/User');
+const Place   = require('./models/Place');
+const Booking = require('./models/Booking');
 
 // ──────────────────────────────────────────────────────────────────────────
-// Connect to MongoDB
+// MongoDB connection
 // ──────────────────────────────────────────────────────────────────────────
 async function connectMongo() {
   if (global.mongoose) return global.mongoose;
   return (global.mongoose = await mongoose.connect(MONGO_URL, {
-    useNewUrlParser:          true,
-    useUnifiedTopology:       true,
-    serverSelectionTimeoutMS: 30000,
-    socketTimeoutMS:          45000,
+    useNewUrlParser:    true,
+    useUnifiedTopology: true,
   }));
 }
-
 connectMongo()
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => {
@@ -53,15 +47,14 @@ connectMongo()
   });
 
 // ──────────────────────────────────────────────────────────────────────────
-// App setup
+// App & Middleware
 // ──────────────────────────────────────────────────────────────────────────
 const app = express();
-app.use(express.json());
-app.use(cookieParser());
 
-// CORS: allow your Netlify app and any Netlify preview
+// 1) CORS — must come before cookieParser & JSON parsing so preflight works
 app.use(cors({
   origin: (origin, callback) => {
+    // allow direct server calls (e.g. mobile apps) if no origin header
     if (!origin) return callback(null, true);
     if (origin === FRONTEND_URL || origin.endsWith('.netlify.app')) {
       return callback(null, true);
@@ -71,7 +64,11 @@ app.use(cors({
   credentials: true,
 }));
 
-// Cloudinary + Multer
+// 2) Parse cookies & JSON
+app.use(cookieParser());
+app.use(express.json());
+
+// 3) Cloudinary + Multer setup (unchanged)
 cloudinary.config({
   cloud_name: CLOUDINARY_CLOUD_NAME,
   api_key:    CLOUDINARY_API_KEY,
@@ -81,24 +78,47 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder:    'hotel-booking',
-    format:    (_, file) => file.mimetype.split('/')[1],
+    folder: 'hotel-booking',
+    format: (_, file) => file.mimetype.split('/')[1],
     public_id: () => Date.now().toString(),
   },
 });
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Helper: extract user from JWT cookie
+// Auth helpers & middleware
 // ──────────────────────────────────────────────────────────────────────────
+
+// Extract token from cookie or header
+function getTokenFromReq(req) {
+  if (req.cookies?.token) return req.cookies.token;
+  const auth = req.headers?.authorization || '';
+  const [scheme, token] = auth.split(' ');
+  if (scheme === 'Bearer' && token) return token;
+  return null;
+}
+
+// Verify JWT and return payload
 function getUserDataFromReq(req) {
   return new Promise((resolve, reject) => {
-    const { token } = req.cookies;
+    const token = getTokenFromReq(req);
     if (!token) return reject(new Error('No token'));
     jwt.verify(token, JWT_SECRET, {}, (err, data) =>
       err ? reject(err) : resolve(data)
     );
   });
+}
+
+// Middleware to protect routes
+async function requireAuth(req, res, next) {
+  try {
+    const userData = await getUserDataFromReq(req);
+    req.user = userData;
+    next();
+  } catch (err) {
+    console.error('Auth error:', err.message);
+    res.status(401).json({ error: 'Unauthorized' });
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -107,28 +127,28 @@ function getUserDataFromReq(req) {
 app.get('/', (_req, res) => res.send('🟢 API is up and running'));
 app.get('/api/test', (_req, res) => res.json({ ok: true }));
 
-// Register
+// — Registration & Login (public) —
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const hashed = bcrypt.hashSync(password, bcryptSalt);
+    const hashed = bcrypt.hashSync(password, bcrypt.genSaltSync(10));
     const userDoc = await User.create({ name, email, password: hashed });
     res.json(userDoc);
   } catch (e) {
-    console.error(e);
+    console.error('Register error:', e);
     res.status(422).json({ error: e.message });
   }
 });
 
-// Login
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const userDoc = await User.findOne({ email });
     if (!userDoc) return res.status(404).json({ error: 'User not found' });
 
-    const passOk = bcrypt.compareSync(password, userDoc.password);
-    if (!passOk) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!bcrypt.compareSync(password, userDoc.password)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     jwt.sign(
       { email: userDoc.email, id: userDoc._id },
@@ -146,186 +166,142 @@ app.post('/api/login', async (req, res) => {
       }
     );
   } catch (err) {
-    console.error(err);
+    console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed' });
   }
 });
 
-// Profile
+// — Profile (public read) —
 app.get('/api/profile', async (req, res) => {
+  if (!req.cookies.token) return res.json(null);
   try {
-    if (!req.cookies.token) return res.json(null);
     const userData = await getUserDataFromReq(req);
     const user = await User.findById(userData.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ name: user.name, email: user.email, _id: user._id });
   } catch (err) {
-    console.error(err);
+    console.error('Profile error:', err);
     res.status(401).json({ error: 'Invalid token' });
   }
 });
 
-// Logout
 app.post('/api/logout', (_req, res) =>
   res
     .cookie('token', '', { expires: new Date(0) })
     .json({ ok: true })
 );
 
-// Upload by URL
+// — Image uploads (public) —
 app.post('/api/upload-by-link', async (req, res) => {
   try {
     const { link } = req.body;
-    const result = await cloudinary.uploader.upload(link, {
-      folder: 'hotel-booking',
-    });
+    const result = await cloudinary.uploader.upload(link, { folder: 'hotel-booking' });
     res.json({ url: result.secure_url });
   } catch (err) {
-    console.error(err);
+    console.error('Upload-by-link error:', err);
     res.status(500).json({ error: 'Upload failed' });
   }
 });
 
-// Upload from device
-app.post(
-  '/api/upload',
-  upload.array('photos', 100),
-  (req, res) => {
-    try {
-      const urls = req.files.map((f) => f.path);
-      res.json({ urls });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Upload failed' });
-    }
-  }
-);
-
-// User places
-app.get('/api/user-places', async (req, res) => {
+app.post('/api/upload', upload.array('photos', 100), (req, res) => {
   try {
-    const userData = await getUserDataFromReq(req);
-    const places = await Place.find({ owner: userData.id });
-    res.json(places);
+    const urls = req.files.map(f => f.path);
+    res.json({ urls });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to get user places' });
+    console.error('Upload error:', err);
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 
-// All places
+// — Places —
+// Public
 app.get('/api/places', async (_req, res) => {
   try {
     const places = await Place.find();
     res.json(places);
   } catch (err) {
-    console.error(err);
+    console.error('Get places error:', err);
     res.status(500).json({ error: 'Failed to get places' });
   }
 });
-
-// Place by ID
 app.get('/api/places/:id', async (req, res) => {
   try {
     const place = await Place.findById(req.params.id);
     if (!place) return res.status(404).json({ error: 'Place not found' });
     res.json(place);
   } catch (err) {
-    console.error(err);
+    console.error('Get place error:', err);
     res.status(500).json({ error: 'Failed to get place' });
   }
 });
 
-// Create place
-app.post('/api/places', async (req, res) => {
+// Protected
+app.get('/api/user-places', requireAuth, async (req, res) => {
   try {
-    const userData = await getUserDataFromReq(req);
-    const placeData = {
-      owner:    userData.id,
-      title:    req.body.title,
-      address:  req.body.address,
-      photos:   req.body.addedPhotos,
-      description: req.body.description,
-      perks:       req.body.perks,
-      extraInfo:   req.body.extraInfo,
-      checkIn:     req.body.checkIn,
-      checkOut:    req.body.checkOut,
-      maxGuests:   req.body.maxGuests,
-      price:       req.body.price,
-    };
-    const doc = await Place.create(placeData);
-    res.json(doc);
+    const places = await Place.find({ owner: req.user.id });
+    res.json(places);
   } catch (err) {
-    console.error(err);
-    res.status(401).json({ error: 'Unauthorized' });
+    console.error('User places error:', err);
+    res.status(500).json({ error: 'Failed to get user places' });
   }
 });
 
-// Update place
-app.put('/api/places', async (req, res) => {
+app.post('/api/places', requireAuth, async (req, res) => {
   try {
-    const userData = await getUserDataFromReq(req);
+    const data = { owner: req.user.id, ...req.body };
+    const doc = await Place.create(data);
+    res.json(doc);
+  } catch (err) {
+    console.error('Create place error:', err);
+    res.status(500).json({ error: 'Failed to create place' });
+  }
+});
+app.put('/api/places', requireAuth, async (req, res) => {
+  try {
     const place = await Place.findById(req.body.id);
     if (!place) return res.status(404).json({ error: 'Place not found' });
-    if (place.owner.toString() !== userData.id) {
+    if (place.owner.toString() !== req.user.id) {
       return res.status(403).json({ error: 'Not owner' });
     }
-    Object.assign(place, {
-      title:       req.body.title,
-      address:     req.body.address,
-      photos:      req.body.addedPhotos,
-      description: req.body.description,
-      perks:       req.body.perks,
-      extraInfo:   req.body.extraInfo,
-      checkIn:     req.body.checkIn,
-      checkOut:    req.body.checkOut,
-      maxGuests:   req.body.maxGuests,
-      price:       req.body.price,
-    });
+    Object.assign(place, req.body);
     await place.save();
     res.json({ ok: true });
   } catch (err) {
-    console.error(err);
+    console.error('Update place error:', err);
     res.status(500).json({ error: 'Failed to update place' });
   }
 });
 
-// Create booking
-app.post('/api/bookings', async (req, res) => {
+// — Bookings —
+// Create
+app.post('/api/bookings', requireAuth, async (req, res) => {
   try {
-    const userData = await getUserDataFromReq(req);
     const bookingData = {
-      place:          req.body.place,
-      checkIn:        req.body.checkIn,
-      checkOut:       req.body.checkOut,
-      numberOfGuests: req.body.numberOfGuests,
-      name:           req.body.name,
-      phone:          req.body.phone,
-      price:          req.body.price,
-      user:           userData.id,
+      ...req.body,
+      user: req.user.id,
     };
     const doc = await Booking.create(bookingData);
     res.json(doc);
   } catch (err) {
-    console.error(err);
+    console.error('Create booking error:', err);
     res.status(500).json({ error: 'Failed to create booking' });
   }
 });
-
-// User bookings
-app.get('/api/bookings', async (req, res) => {
+// List
+app.get('/api/bookings', requireAuth, async (req, res) => {
   try {
-    const userData = await getUserDataFromReq(req);
-    const bookings = await Booking.find({ user: userData.id }).populate('place');
+    const bookings = await Booking
+      .find({ user: req.user.id })
+      .populate('place');
     res.json(bookings);
   } catch (err) {
-    console.error(err);
+    console.error('Get bookings error:', err);
     res.status(500).json({ error: 'Failed to get bookings' });
   }
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Error handler (must be last)
+// Global error handler (last middleware)
 // ──────────────────────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
@@ -333,10 +309,9 @@ app.use((err, _req, res, _next) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// Start server in development; export `app` for production (Vercel)
+// Start server in development; export for Vercel
 // ──────────────────────────────────────────────────────────────────────────
 if (NODE_ENV !== 'production') {
   app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
 }
-
 module.exports = app;
