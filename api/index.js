@@ -1,6 +1,8 @@
 // index.js
 require('dotenv').config();
-
+import axios from 'axios';
+axios.defaults.baseURL = 'https://maitristayvmm.vercel.app';
+axios.defaults.withCredentials = true;
 const express      = require('express');
 const mongoose     = require('mongoose');
 const cors         = require('cors');

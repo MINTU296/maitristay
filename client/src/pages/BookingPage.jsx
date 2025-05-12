@@ -11,10 +11,18 @@ export default function BookingPage() {
 
   useEffect(() => {
     if (id) {
-      axios.get('/api/bookings').then(response => {
-        const found = response.data.find(b => b._id === id);
-        if (found) setBooking(found);
-      });
+      axios.get('/api/bookings', { withCredentials: true })
+        .then(response => {
+          const found = response.data.find(b => b._id === id);
+          if (found) setBooking(found);
+        })
+        .catch(err => {
+          console.error('Error loading booking:', err);
+          // handle 401
+          if (err.response?.status === 401) {
+            window.location.href = '/login';
+          }
+        });
     }
   }, [id]);
 

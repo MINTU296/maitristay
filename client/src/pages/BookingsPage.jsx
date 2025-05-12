@@ -9,9 +9,16 @@ export default function BookingsPage() {
   const [bookings, setBookings] = useState([]);
 
   useEffect(() => {
+
     axios.get('/api/bookings', { withCredentials: true })
       .then(response => setBookings(response.data))
-      .catch(error => console.error('Failed to fetch bookings:', error));
+      .catch(error => {
+        console.error('Failed to fetch bookings:', error);
+        // optionally redirect to /login on 401:
+        if (error.response?.status === 401) {
+          window.location.href = '/login';
+        }
+      });
   }, []);
 
   return (
